@@ -1,0 +1,18 @@
+#!/bin/sh
+
+#############################################################################################
+#  docker-start 
+#
+#  Run the BD update script, also starts and keeps the supervisor daemon up.
+#
+#  Always make sure the last command is the main daemon that should be kept running in
+#  foreground
+#
+#  Author: Flávio Moringa <flavio.moringa@gmail.com>
+#############################################################################################
+
+#Update the DB
+sequelize db:migrate
+
+#main command -> must be kept running in the Foreground
+supervisord -n -c /etc/supervisord.conf

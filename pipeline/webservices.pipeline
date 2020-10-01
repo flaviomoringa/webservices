@@ -1,0 +1,128 @@
+node('Builder') {
+
+    try {
+        wrap([$class: 'BuildUser']) {
+            def user = env.BUILD_USER
+            def cb = currentBuild
+
+            slackSend channel: '#deploys',
+                      color: 'good',
+                      message: "${cb.fullDisplayName} Started by user ${user} (<${cb.absoluteUrl}|Open>)"
+        }
+
+        ansiColor('xterm') {
+
+            SERVICE = params.Service
+            MAIN_SERVICE = sh(returnStdout: true, script: 'echo '+SERVICE+' | sed "s/-prod//"').trim()
+            ECR_REGISTRY = "XXXXXXXXXXX.dkr.ecr.eu-west-1.amazonaws.com/"
+            ECR_REPOSITORY = ECR_REGISTRY + SERVICE
+            ECR_URL = "http://" + ECR_REPOSITORY
+            SSH_KEY = "/var/lib/jenkins/deploy-keys/builder-ssh-key"
+            ECS_CLUSTER = "webservices-prod"
+            DATE = sh(returnStdout: true, script: 'date +%s').trim()
+            EC2_NAME = "ECS-" + ECS_CLUSTER
+            INSTANCES_TO_ADD = 1
+
+            def container
+            def commit
+
+            stage('Increase the number of cluster instances') {
+              INSTANCE_ID = sh(returnStdout: true, script: 'aws ec2 describe-instances --filters Name=tag:Name,Values="'+EC2_NAME+'" --query Reservations[0].Instances[0].InstanceId --output text').trim()
+              AUTOSCALING_GROUP_NAME = sh(returnStdout: true, script: 'aws ec2 describe-tags --filters "Name=resource-id,Values='+INSTANCE_ID+'" "Name=key,Values=aws:autoscaling:groupName" --query Tags[].Value --output text').trim()
+              DESIRED_CAPACITY = sh(returnStdout: true, script: 'aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names '+AUTOSCALING_GROUP_NAME+' --query AutoScalingGroups[].DesiredCapacity --output text').trim()
+              NEW_DESIRED_CAPACITY = sh(returnStdout: true, script: 'echo '+DESIRED_CAPACITY+' + '+INSTANCES_TO_ADD+' | bc').trim()
+
+              sh("aws autoscaling set-desired-capacity --auto-scaling-group-name ${AUTOSCALING_GROUP_NAME} --desired-capacity ${NEW_DESIRED_CAPACITY}")
+            }
+
+            stage('Get latest commit per repo') {
+                if ("${Service}" == "webservices") commit=sh(returnStdout: true, script: 'git ls-remote git@github.com:flaviomoringa/webservices | grep "/master$" | cut -f1').trim()
+            }
+
+            stage('SCM Clone') {
+                dir('Docker') {
+                    checkout scm: [$class: 'GitSCM', userRemoteConfigs: [[url: 'git@github.com:/flaviomoringa/ecs', credentialsId: 'builder-github']], branches: [[name:  "master"]]], poll: false
+                }
+            }
+
+            stage ('Copy ssh key') {
+                sh("cp ${SSH_KEY} ./Docker/${MAIN_SERVICE}/container/.")
+            }
+
+            stage ('Copy gpg key') {
+                GPG_KEY_ID = "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+                sh("gpg --armor --export-secret-keys "+GPG_KEY_ID+" > ./Docker/${MAIN_SERVICE}/container/builder-gpg-key")
+            }
+
+            stage('Login to ECR') {
+                sh("aws ecr get-login-password --region eu-west-1 | docker login -u AWS --password-stdin "+ECR_REGISTRY)
+            }
+
+            stage('Update base images') {
+                sh("docker pull "+ECR_REGISTRY+"base/nodejs:12.13")
+            }
+
+            stage ('Build the container') {
+                container = docker.build(SERVICE+":"+commit, "--build-arg CACHE_DATE="+DATE+" ./Docker/${MAIN_SERVICE}/container")
+            }
+
+            stage('Create ECR Repo') {
+                sh("if ! aws ecr describe-repositories --repository-name ${Service}; then aws ecr create-repository --repository-name ${Service}; fi")
+            }
+
+            stage('Push image to ECR') {
+                docker.withRegistry(ECR_URL) {
+                    container.push(commit)
+                    container.push("latest")
+                }
+            }
+
+            ECR_IMAGE= ECR_REPOSITORY + ":" + commit
+
+            stage('Deploy the new image in an task') {
+                sh("ecs-deploy -c ${ECS_CLUSTER} -n ${Service} -i ${ECR_IMAGE} -p default -t 120 -m 100 -M 200 --enable-rollback")
+            }
+
+            stage('Reduce the number of cluster instances') {
+                sh("aws autoscaling set-desired-capacity --auto-scaling-group-name ${AUTOSCALING_GROUP_NAME} --desired-capacity ${DESIRED_CAPACITY}")
+            }
+
+        }
+
+    } catch (err) {
+        if (err instanceof InterruptedException) {
+            currentBuild.result = 'ABORTED'
+            echo "Deploy aborted!"
+        } else {
+            currentBuild.result = 'FAILED'
+            echo "Deploy failed!"
+            echo "Error cause: "+err
+        }
+
+    } finally {
+        def cb = currentBuild
+
+        if (cb.result == 'ABORTED') {
+            slackSend channel: '#deploys',
+                      color: 'warning',
+                      message: "${cb.fullDisplayName} Aborted after ${cb.durationString} (<${cb.absoluteUrl}|Open>)"
+        } else if (cb.result == 'FAILED') {
+            slackSend channel: '#deploys',
+                      color: 'danger',
+                      message: "${cb.fullDisplayName} Failed after ${cb.durationString} (<${cb.absoluteUrl}|Open>)"
+        } else {
+            if (cb.currentResult == 'SUCCESS') {
+                slackSend channel: '#deploys',
+                          color: 'good',
+                          message: "${cb.fullDisplayName} Success after ${cb.durationString} (<${cb.absoluteUrl}|Open>)"
+            } else {
+                slackSend channel: '#deploys',
+                          color: 'danger',
+                          message: "${cb.fullDisplayName} Failed after ${cb.durationString} (<${cb.absoluteUrl}|Open>)"
+            }
+        }
+
+    }
+
+}
+

@@ -1,0 +1,17 @@
+service_name = "webservices"
+lb_health_check = "/status"
+vpc_id = "vpc-XXXXXXXXX"
+cluster_name = "webservices-prod"
+policy_name = "track-scaling-webservices-prod-service-frontend-tasks"
+policy_target_value = 80
+lb1_name = "ecs-a"
+lb2_name = "ecs-b"
+lb_path_pattern_values = ["/*"]
+lb_host_header_values = ["webservices.*.flavio.com", "ws.*.flavio.com"]
+listener_port = "443" /* port where the listener rule is going to be created. 80 or 443 */
+aws_region = "eu-west-1"
+reserved_memory = 1024
+reserved_cpu = 2048
+desired_count = 6
+min_capacity = 6
+max_capacity = 30

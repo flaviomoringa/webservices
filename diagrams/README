@@ -1,0 +1,9 @@
+Using "diagrams" (pip3 install diagrams) -> https://diagrams.mingrammer.com/
+
+This way with some simple python snipets we can have Infrastructure diagrams As Code.
+It's more for simpler diagrams, to show an overview of your system, without over complicating.
+
+To run it just do a:
+python3 ecs.py
+
+

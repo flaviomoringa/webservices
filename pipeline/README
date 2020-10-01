@@ -1,0 +1,12 @@
+This is a pipepline for Jenkins
+
+It will be built on a jenkins slave node called "builder"
+
+That node needs AWS credentials and aws-cli with ECS, ECR(aws docker registry) and EC2 access.
+
+This pipeline must receive a variable named "Service" which value is the name of the service to deploy. The Service configurations (Dockerfile) comes
+from a directory in the GitHub repo "flaviomoringa/ecs/<Service>/container"
+
+For the ecs deploy it uses the command "ecs-deploy" (https://github.com/silinternational/ecs-deploy) that does a "blue/green" deploy of the service on the ECS Cluster. Meaning if the healtcheck of the Service fails it will rollback to the previous version.
+
+It also sends build information to a slack channel (depends on the slack plugin being installed and configured on Jenkins)
